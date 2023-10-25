@@ -64,8 +64,8 @@ async function githubOauth(req, res, next) {
       });
     }
 
-    const { access_token } = await authService.getGithubOathToken({ code });
-    const { email, avatar_url, login } = await authService.getGithubUser({
+    const { access_token } = await getGithubOathToken({ code });
+    const { email, avatar_url, login } = await getGithubUser({
       access_token,
     });
 
