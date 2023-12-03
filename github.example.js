@@ -1,25 +1,22 @@
-// !! Frontend redirect example,
-// 🧢 you should attach this function to your oauth github login button
-// export function getGitHubUrl(from) {
-//   const rootURl = "https://github.com/login/oauth/authorize";
+function getGithubOauthUrl(from) {
+  const rootURl = "https://github.com/login/oauth/authorize";
 
-//   const options = {
-//     client_id: import.meta.env.VITE_GITHUB_OAUTH_CLIENT_ID, //DOMAIN/api/auth/github
-//     redirect_uri: import.meta.env.VITE_GITHUB_OAUTH_REDIRECT_URL,
-//     scope: "user:email",
-//     state: from,
-//   };
+  const options = {
+    client_id: process.env.REACT_APP_GITHUB_OAUTH_CLIENT_ID,
+    redirect_uri: process.env.REACT_APP_GITHUB_OAUTH_CALLBACK,
+    scope: "user:email",
+    state: from,
+  };
 
-//   const qs = new URLSearchParams(options);
-
-//   return `${rootURl}?${qs.toString()}`;
-// }
+  const qs = new URLSearchParams(options);
+  return `${rootURl}?${qs.toString()}`;
+}
 
 async function getGithubOathToken({ code }) {
   const rootUrl = "https://github.com/login/oauth/access_token";
   const options = {
-    client_id: process.env.GITHUB_CLIENT_ID,
-    client_secret: process.env.GITHUB_CLIENT_SECRET,
+    client_id: process.env.GITHUB_OAUTH_CLIENT_ID,
+    client_secret: process.env.GITHUB_OAUTH_CLIENT_SECRET,
     code,
   };
   const queryString = qs.stringify(options);
@@ -42,6 +39,7 @@ async function getGithubUser({ access_token }) {
       headers: { Authorization: `Bearer ${access_token}` },
     });
 
+    console.log(data);
     return data;
   } catch (err) {
     throw err;
@@ -49,19 +47,19 @@ async function getGithubUser({ access_token }) {
 }
 
 async function githubOauth(req, res, next) {
-  const { code, state, error } = req.query;
+  const { code, error } = req.query;
   try {
-    const pathUrl = state ?? "/";
-
     if (error) {
-      return res.redirect(`${process.env.FRONTEND_ORIGIN}/login`);
+      console.log("Failed to authorize GitHub User:", error);
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/oauth/error?message=${error}`
+      );
     }
 
     if (!code) {
-      return res.status(401).json({
-        status: "error",
-        message: "Authorization code not provided!",
-      });
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/oauth/error?message=Authorization code not provided`
+      );
     }
 
     const { access_token } = await getGithubOathToken({ code });
@@ -71,38 +69,42 @@ async function githubOauth(req, res, next) {
 
     if (!email) {
       return res.status(403).json({
-        status: "fail",
         message:
-          "You GitHub account does not have any public email address, please add one and try again",
+          "Your GitHub account does not have any public email address, please add one and try again",
+        payload: null,
       });
     }
 
     const userData = {
       email,
-      username: login,
-      profile: { picture: avatar_url },
-      password: " ",
-      isVerified: true,
-      authType: "GitHub",
+      full_name: login,
+      password: null,
+      is_verified: true,
+      provider: "github",
     };
-    const user = await userService.updateOrInsertUser(userData);
+    const user = await userService.getOrCreateUser(userData);
 
     if (!user) {
-      return res.redirect(`${process.env.FRONTEND_ORIGIN}/oauth/error`);
+      return res.redirect(
+        `${process.env.FRONTEND_ORIGIN}/oauth/error?message=Failed to get or create user`
+      );
     }
 
-    const token = await new jose.SignJWT({ userId: user._id })
-      .setProtectedHeader({ alg: "HS256" })
-      .setExpirationTime(process.env.JWT_EXPIRES_IN ?? "1h")
-      .sign(new TextEncoder().encode(process.env.JWT_SECRET));
-
-    res.cookie("token", token, {
-      expires: new Date(Date.now() + 60 * 60 * 1000),
+    const payload = {
+      id: user.id,
+      email: user.email,
+      provider: user.provider,
+      is_verified: user.is_verified,
+    };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
     });
 
-    res.redirect(`${process.env.FRONTEND_ORIGIN}${pathUrl}`);
+    res.redirect(`${process.env.FRONTEND_ORIGIN}/oauth/success?token=${token}`);
   } catch (err) {
     console.error("Failed to authorize GitHub User:", err);
-    return res.redirect(`${process.env.FRONTEND_ORIGIN}/oauth/error`);
+    res.redirect(
+      `${process.env.FRONTEND_ORIGIN}/oauth/error?message=${err.message ?? err}`
+    );
   }
 }
